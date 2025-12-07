@@ -1,4 +1,4 @@
--- 【平板終極撞飛腳本 v5.4】IY式旋轉版
+-- 【平板終極撞飛腳本 v5.9】Noclip + 極速旋轉模式
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -14,6 +14,11 @@ local UP_POWER = 6000
 local EXPLOSION_RADIUS = 15
 local TOUCH_MASS = 500000
 
+-- Noclip 和旋轉設定（Infinite Yield 標準）
+local SPIN_SPEED = 20000  -- IY 標準極速旋轉
+local noclipConnection = nil
+local spinConnection = nil
+
 -- 高亮系統
 local highlights = {}
 local SCAN_INTERVAL = 1.0
@@ -27,30 +32,30 @@ local EXPLOSION_INTERVAL = 0.15
 local flingCooldowns = {}
 local rangeModeTrigger = true
 
--- 觸碰模式用（IY式旋轉）
-local bodyAngularVelocity = nil
-local bamLoop = nil
-
 -- ================== 判斷是否可彈飛 ==================
 local function canBeFlung(part)
     if not part:IsA("BasePart") then return false end
     if part.Anchored then return false end
     if not part.Parent then return false end
     
+    -- 過濾玩家角色
     local char = player.Character
     if char and part:IsDescendantOf(char) then return false end
     
+    -- 過濾其他玩家
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character and part:IsDescendantOf(p.Character) then
             return false
         end
     end
     
+    -- 檢查是否有座位且有人坐
     local seat = part:FindFirstChildOfClass("Seat") or part:FindFirstChildOfClass("VehicleSeat")
     if seat and seat.Occupant then
         return false
     end
     
+    -- 檢查父物件是否有座位
     if part.Parent then
         for _, child in ipairs(part.Parent:GetChildren()) do
             if child:IsA("Seat") or child:IsA("VehicleSeat") then
@@ -61,6 +66,7 @@ local function canBeFlung(part)
         end
     end
     
+    -- 過濾地形和特殊物體
     if part:IsA("Terrain") then return false end
     if part.Name == "Baseplate" or part.Name == "Base" then return false end
     if part.AssemblyMass > 5000 then return false end
@@ -151,6 +157,7 @@ local function flingPart(part)
     ))
 end
 
+-- 範圍爆炸
 local function explosionFlingAroundPlayer()
     local char = player.Character
     if not char then return end
@@ -208,7 +215,7 @@ local function explosionFlingAroundPlayer()
     end
 end
 
--- 觸碰模式：IY式旋轉（使用BodyAngularVelocity）
+-- ================== Noclip + 極速旋轉模式 ==================
 local function enableTouchMode()
     local char = player.Character
     if not char then return end
@@ -216,49 +223,53 @@ local function enableTouchMode()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
-    -- 讓角色所有部位都變成超高質量，防止被彈飛
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CustomPhysicalProperties = PhysicalProperties.new(
-                TOUCH_MASS / part.Size.X / part.Size.Y / part.Size.Z,
-                0.3, 0, 1, 1
-            )
-        end
-    end
+    -- 設置高質量物理屬性
+    hrp.CustomPhysicalProperties = PhysicalProperties.new(
+        TOUCH_MASS / hrp.Size.X / hrp.Size.Y / hrp.Size.Z,
+        0.3, 0, 1, 1
+    )
     
-    -- 創建 BodyAngularVelocity（IY式）
-    if not bodyAngularVelocity then
-        bodyAngularVelocity = Instance.new("BodyAngularVelocity")
-        bodyAngularVelocity.Name = "FlingBAV"
-        bodyAngularVelocity.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-        bodyAngularVelocity.P = 9e9
-        bodyAngularVelocity.AngularVelocity = Vector3.new(0, 99999, 0)
-        bodyAngularVelocity.Parent = hrp
-    end
-    
-    -- 持續更新BAV（確保不被移除）
-    if not bamLoop then
-        bamLoop = RunService.Heartbeat:Connect(function()
-            if MODE ~= "觸碰" or not ENABLED then
-                if bamLoop then
-                    bamLoop:Disconnect()
-                    bamLoop = nil
+    -- ===== Noclip 系統 =====
+    if not noclipConnection then
+        noclipConnection = RunService.Stepped:Connect(function()
+            if MODE ~= "觸碰" or not ENABLED then 
+                if noclipConnection then
+                    noclipConnection:Disconnect()
+                    noclipConnection = nil
                 end
-                return
+                return 
+            end
+            
+            local currentChar = player.Character
+            if not currentChar then return end
+            
+            -- 將所有身體部位設為 CanCollide = false
+            for _, part in pairs(currentChar:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    end
+    
+    -- ===== 極速旋轉系統（類似 Infinite Yield） =====
+    if not spinConnection then
+        spinConnection = RunService.Heartbeat:Connect(function()
+            if MODE ~= "觸碰" or not ENABLED then 
+                if spinConnection then
+                    spinConnection:Disconnect()
+                    spinConnection = nil
+                end
+                return 
             end
             
             local currentChar = player.Character
             if not currentChar then return end
             
             local currentHrp = currentChar:FindFirstChild("HumanoidRootPart")
-            if currentHrp and not currentHrp:FindFirstChild("FlingBAV") then
-                -- 重新創建BAV（如果被移除）
-                bodyAngularVelocity = Instance.new("BodyAngularVelocity")
-                bodyAngularVelocity.Name = "FlingBAV"
-                bodyAngularVelocity.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-                bodyAngularVelocity.P = 9e9
-                bodyAngularVelocity.AngularVelocity = Vector3.new(0, 99999, 0)
-                bodyAngularVelocity.Parent = currentHrp
+            if currentHrp then
+                -- 設置極高速旋轉速度（類似 IY 的 fling）
+                currentHrp.AssemblyAngularVelocity = Vector3.new(0, SPIN_SPEED, 0)
             end
         end)
     end
@@ -270,29 +281,28 @@ local function disableTouchMode()
     
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp then
+        hrp.CustomPhysicalProperties = nil
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        
-        -- 移除BAV
-        local bav = hrp:FindFirstChild("FlingBAV")
-        if bav then
-            bav:Destroy()
-        end
     end
     
-    -- 恢復所有身體部位的物理屬性
-    for _, part in ipairs(char:GetDescendants()) do
+    -- 恢復碰撞
+    for _, part in pairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
-            part.CustomPhysicalProperties = nil
+            part.CanCollide = true
         end
     end
     
-    -- 停止循環
-    if bamLoop then
-        bamLoop:Disconnect()
-        bamLoop = nil
+    -- 停止 Noclip
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
     end
     
-    bodyAngularVelocity = nil
+    -- 停止旋轉
+    if spinConnection then
+        spinConnection:Disconnect()
+        spinConnection = nil
+    end
 end
 
 -- ================== 美化GUI介面 ==================
@@ -350,7 +360,7 @@ end)
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
-    title.Text = "🚀 撞飛 v5.4"
+    title.Text = "🚀 撞飛 v5.9"
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = titleBar
 
@@ -428,6 +438,7 @@ end)
     btnModeCorner.CornerRadius = UDim.new(0, 8)
     btnModeCorner.Parent = btnMode
 
+    -- 滑桿通用函數
     local function createSlider(position, labelText, color, min, max, default, valueVar)
         local container = Instance.new("Frame")
         container.Size = UDim2.new(1, -16, 0, 55)
@@ -674,7 +685,7 @@ end)
 
 -- ================== 載入提示 ==================
 game.StarterGui:SetCore("SendNotification", {
-    Title = "🚀 撞飛腳本 v5.4";
-    Text = "✅ IY式旋轉模式\n💪 使用BodyAngularVelocity\n🌪️ 觸碰模式：極速旋轉！";
+    Title = "🚀 撞飛腳本 v5.9";
+    Text = "✅ 觸碰模式：IY標準極速旋轉\n🌪️ Noclip穿牆 + 20000旋轉速度\n💥 變成終極破壞球！";
     Duration = 6;
 })
