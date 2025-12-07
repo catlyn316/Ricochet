@@ -1,4 +1,4 @@
--- 【平板終極撞飛腳本 v5.3】美化版 + 修復觸碰模式
+-- 【平板終極撞飛腳本 v5.4】IY式旋轉版
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -12,24 +12,24 @@ local MODE = "點擊"
 local FLY_POWER = 16000
 local UP_POWER = 6000
 local EXPLOSION_RADIUS = 15
-local TOUCH_MASS = 500000  -- 大幅提升到50萬
+local TOUCH_MASS = 500000
 
 -- 高亮系統
 local highlights = {}
 local SCAN_INTERVAL = 1.0
 local lastScan = 0
 local maxHighlights = 30
-local SCAN_RADIUS = 100  -- 擴大到100格
+local SCAN_RADIUS = 100
 
 -- 範圍模式計時器
 local lastExplosion = 0
 local EXPLOSION_INTERVAL = 0.15
 local flingCooldowns = {}
-local rangeModeTrigger = true  -- 用於確保範圍模式能立即觸發
+local rangeModeTrigger = true
 
--- 觸碰模式用（修復版）
-local massConnection = nil
-local spinConnection = nil  -- 旋轉連接
+-- 觸碰模式用（IY式旋轉）
+local bodyAngularVelocity = nil
+local bamLoop = nil
 
 -- ================== 判斷是否可彈飛 ==================
 local function canBeFlung(part)
@@ -37,24 +37,20 @@ local function canBeFlung(part)
     if part.Anchored then return false end
     if not part.Parent then return false end
     
-    -- 過濾玩家角色
     local char = player.Character
     if char and part:IsDescendantOf(char) then return false end
     
-    -- 過濾其他玩家
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character and part:IsDescendantOf(p.Character) then
             return false
         end
     end
     
-    -- 檢查是否有座位且有人坐
     local seat = part:FindFirstChildOfClass("Seat") or part:FindFirstChildOfClass("VehicleSeat")
     if seat and seat.Occupant then
         return false
     end
     
-    -- 檢查父物件是否有座位
     if part.Parent then
         for _, child in ipairs(part.Parent:GetChildren()) do
             if child:IsA("Seat") or child:IsA("VehicleSeat") then
@@ -65,7 +61,6 @@ local function canBeFlung(part)
         end
     end
     
-    -- 過濾地形和特殊物體
     if part:IsA("Terrain") then return false end
     if part.Name == "Baseplate" or part.Name == "Base" then return false end
     if part.AssemblyMass > 5000 then return false end
@@ -102,7 +97,6 @@ local function scanUnanchoredParts()
     
     local playerPos = hrp.Position
     
-    -- 使用 Region3 只掃描附近區域，不掃描全地圖
     local region = Region3.new(
         playerPos - Vector3.new(SCAN_RADIUS, SCAN_RADIUS, SCAN_RADIUS),
         playerPos + Vector3.new(SCAN_RADIUS, SCAN_RADIUS, SCAN_RADIUS)
@@ -112,7 +106,6 @@ local function scanUnanchoredParts()
     local parts = Workspace:FindPartsInRegion3(region, char, 100)
     local candidates = {}
     
-    -- 只處理附近的物體
     for _, obj in ipairs(parts) do
         if canBeFlung(obj) then
             local distance = (obj.Position - playerPos).Magnitude
@@ -122,12 +115,10 @@ local function scanUnanchoredParts()
         end
     end
     
-    -- 按距離排序
     table.sort(candidates, function(a, b)
         return a.distance < b.distance
     end)
     
-    -- 只標記最近的30個
     local count = 0
     for _, data in ipairs(candidates) do
         if count >= maxHighlights then break end
@@ -137,7 +128,6 @@ local function scanUnanchoredParts()
 end
 
 local function updateHighlights()
-    -- 快速清理：只檢查已標記的物體
     for part, hl in pairs(highlights) do
         if not canBeFlung(part) then
             removeHighlight(part)
@@ -161,7 +151,6 @@ local function flingPart(part)
     ))
 end
 
--- 範圍爆炸（以玩家為中心，優化版）
 local function explosionFlingAroundPlayer()
     local char = player.Character
     if not char then return end
@@ -172,9 +161,8 @@ local function explosionFlingAroundPlayer()
     local playerPos = hrp.Position
     local now = tick()
     local flingCount = 0
-    local maxFlings = 20  -- 每次最多彈飛20個物體，避免卡頓
+    local maxFlings = 20
     
-    -- 使用Region3優化（只掃描範圍內的物體）
     local region = Region3.new(
         playerPos - Vector3.new(EXPLOSION_RADIUS, EXPLOSION_RADIUS, EXPLOSION_RADIUS),
         playerPos + Vector3.new(EXPLOSION_RADIUS, EXPLOSION_RADIUS, EXPLOSION_RADIUS)
@@ -190,9 +178,8 @@ local function explosionFlingAroundPlayer()
             local distance = (obj.Position - playerPos).Magnitude
             
             if distance <= EXPLOSION_RADIUS then
-                -- 檢查冷卻時間（避免重複彈飛）
                 local lastFling = flingCooldowns[obj] or 0
-                if now - lastFling >= 0.5 then  -- 每個物體0.5秒才能再次被彈飛
+                if now - lastFling >= 0.5 then
                     local direction = (obj.Position - playerPos).Unit
                     local force = (1 - distance / EXPLOSION_RADIUS) * FLY_POWER
                     
@@ -214,7 +201,6 @@ local function explosionFlingAroundPlayer()
         end
     end
     
-    -- 清理已銷毀物體的冷卻記錄
     for part, time in pairs(flingCooldowns) do
         if not part.Parent or now - time > 2 then
             flingCooldowns[part] = nil
@@ -222,7 +208,7 @@ local function explosionFlingAroundPlayer()
     end
 end
 
--- 觸碰模式：只修改HumanoidRootPart（修復版）
+-- 觸碰模式：IY式旋轉（使用BodyAngularVelocity）
 local function enableTouchMode()
     local char = player.Character
     if not char then return end
@@ -230,30 +216,45 @@ local function enableTouchMode()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
-    -- 只修改HRP，避免影響整體物理
+    -- 設置超高質量
     hrp.CustomPhysicalProperties = PhysicalProperties.new(
         TOUCH_MASS / hrp.Size.X / hrp.Size.Y / hrp.Size.Z,
         0.3, 0, 1, 1
     )
     
-    -- 加入高速旋轉
-    if not spinConnection then
-        spinConnection = RunService.Heartbeat:Connect(function()
-            if MODE ~= "觸碰" or not ENABLED then 
-                if spinConnection then
-                    spinConnection:Disconnect()
-                    spinConnection = nil
+    -- 創建 BodyAngularVelocity（IY式）
+    if not bodyAngularVelocity then
+        bodyAngularVelocity = Instance.new("BodyAngularVelocity")
+        bodyAngularVelocity.Name = "FlingBAV"
+        bodyAngularVelocity.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bodyAngularVelocity.P = 9e9
+        bodyAngularVelocity.AngularVelocity = Vector3.new(0, 99999, 0)
+        bodyAngularVelocity.Parent = hrp
+    end
+    
+    -- 持續更新BAV（確保不被移除）
+    if not bamLoop then
+        bamLoop = RunService.Heartbeat:Connect(function()
+            if MODE ~= "觸碰" or not ENABLED then
+                if bamLoop then
+                    bamLoop:Disconnect()
+                    bamLoop = nil
                 end
-                return 
+                return
             end
             
             local currentChar = player.Character
             if not currentChar then return end
             
             local currentHrp = currentChar:FindFirstChild("HumanoidRootPart")
-            if currentHrp then
-                -- 施加持續的旋轉力矩
-                currentHrp:ApplyAngularImpulse(Vector3.new(0, 50000, 0))
+            if currentHrp and not currentHrp:FindFirstChild("FlingBAV") then
+                -- 重新創建BAV（如果被移除）
+                bodyAngularVelocity = Instance.new("BodyAngularVelocity")
+                bodyAngularVelocity.Name = "FlingBAV"
+                bodyAngularVelocity.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+                bodyAngularVelocity.P = 9e9
+                bodyAngularVelocity.AngularVelocity = Vector3.new(0, 99999, 0)
+                bodyAngularVelocity.Parent = currentHrp
             end
         end)
     end
@@ -266,14 +267,22 @@ local function disableTouchMode()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp then
         hrp.CustomPhysicalProperties = nil
-        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)  -- 停止旋轉
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        
+        -- 移除BAV
+        local bav = hrp:FindFirstChild("FlingBAV")
+        if bav then
+            bav:Destroy()
+        end
     end
     
-    -- 停止旋轉連接
-    if spinConnection then
-        spinConnection:Disconnect()
-        spinConnection = nil
+    -- 停止循環
+    if bamLoop then
+        bamLoop:Disconnect()
+        bamLoop = nil
     end
+    
+    bodyAngularVelocity = nil
 end
 
 -- ================== 美化GUI介面 ==================
@@ -281,17 +290,13 @@ local function createGUI()
 
 -- ================== 角色重生處理 ==================
 player.CharacterAdded:Connect(function(character)
-    -- 等待角色完全載入
     character:WaitForChild("HumanoidRootPart")
     task.wait(0.5)
     
-    -- 保持原有狀態和模式，不重置
     if ENABLED then
-        -- 重新掃描綠框
         task.spawn(scanUnanchoredParts)
     end
     
-    -- 如果是觸碰模式，重新啟用
     if MODE == "觸碰" then
         task.wait(0.2)
         enableTouchMode()
@@ -302,7 +307,6 @@ end)
     sg.ResetOnSpawn = false
     sg.Parent = player:WaitForChild("PlayerGui")
 
-    -- 主容器（圓角背景）- 縮小版
     local mainFrame = Instance.new("Frame")
     mainFrame.Size = UDim2.new(0, 200, 0, 370)
     mainFrame.Position = UDim2.new(0, 15, 0, 15)
@@ -319,7 +323,6 @@ end)
     mainStroke.Thickness = 2
     mainStroke.Parent = mainFrame
 
-    -- 標題欄（可拖拽區域）
     local titleBar = Instance.new("Frame")
     titleBar.Size = UDim2.new(1, 0, 0, 42)
     titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
@@ -330,7 +333,6 @@ end)
     titleBarCorner.CornerRadius = UDim.new(0, 15)
     titleBarCorner.Parent = titleBar
 
-    -- 標題文字
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, -75, 1, 0)
     title.Position = UDim2.new(0, 12, 0, 0)
@@ -342,7 +344,6 @@ end)
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = titleBar
 
-    -- 關閉按鈕
     local btnClose = Instance.new("TextButton")
     btnClose.Size = UDim2.new(0, 30, 0, 30)
     btnClose.Position = UDim2.new(1, -36, 0, 6)
@@ -358,7 +359,6 @@ end)
     btnCloseCorner.CornerRadius = UDim.new(0, 6)
     btnCloseCorner.Parent = btnClose
 
-    -- 縮小按鈕
     local btnMinimize = Instance.new("TextButton")
     btnMinimize.Size = UDim2.new(0, 30, 0, 30)
     btnMinimize.Position = UDim2.new(1, -70, 0, 6)
@@ -374,14 +374,12 @@ end)
     btnMinimizeCorner.CornerRadius = UDim.new(0, 6)
     btnMinimizeCorner.Parent = btnMinimize
 
-    -- 內容容器
     local contentFrame = Instance.new("Frame")
     contentFrame.Size = UDim2.new(1, 0, 1, -42)
     contentFrame.Position = UDim2.new(0, 0, 0, 42)
     contentFrame.BackgroundTransparency = 1
     contentFrame.Parent = mainFrame
 
-    -- 主開關按鈕（縮小版）
     local btnMain = Instance.new("TextButton")
     btnMain.Size = UDim2.new(1, -16, 0, 55)
     btnMain.Position = UDim2.new(0, 8, 0, 8)
@@ -405,7 +403,6 @@ end)
     btnMainGradient.Rotation = 90
     btnMainGradient.Parent = btnMain
 
-    -- 模式切換按鈕
     local btnMode = Instance.new("TextButton")
     btnMode.Size = UDim2.new(1, -16, 0, 45)
     btnMode.Position = UDim2.new(0, 8, 0, 70)
@@ -421,7 +418,6 @@ end)
     btnModeCorner.CornerRadius = UDim.new(0, 8)
     btnModeCorner.Parent = btnMode
 
-    -- 滑桿通用函數
     local function createSlider(position, labelText, color, min, max, default, valueVar)
         local container = Instance.new("Frame")
         container.Size = UDim2.new(1, -16, 0, 55)
@@ -501,7 +497,6 @@ end)
         end)
     end
 
-    -- 創建三個滑桿
     createSlider(UDim2.new(0, 8, 0, 123), "⚡ 橫向：", Color3.fromRGB(0, 255, 150), 1000, 50000, 16000, "FLY_POWER")
     createSlider(UDim2.new(0, 8, 0, 186), "⬆️ 垂直：", Color3.fromRGB(255, 200, 50), 0, 20000, 6000, "UP_POWER")
     createSlider(UDim2.new(0, 8, 0, 249), "💥 範圍：", Color3.fromRGB(255, 100, 200), 5, 100, 15, "EXPLOSION_RADIUS")
@@ -547,25 +542,15 @@ end)
     end)
 
     -- ================== 按鈕功能 ==================
-    -- 關閉按鈕
     btnClose.MouseButton1Click:Connect(function()
-        -- 關閉功能，恢復所有狀態
         ENABLED = false
         for part, _ in pairs(highlights) do
             removeHighlight(part)
         end
         disableTouchMode()
-        
-        -- 確保停止旋轉
-        if spinConnection then
-            spinConnection:Disconnect()
-            spinConnection = nil
-        end
-        
         sg:Destroy()
     end)
 
-    -- 縮小按鈕
     local minimized = false
     btnMinimize.MouseButton1Click:Connect(function()
         minimized = not minimized
@@ -592,14 +577,12 @@ end)
         end
     end)
 
-    -- 主開關按鈕
     btnMain.MouseButton1Click:Connect(function()
         ENABLED = not ENABLED
         btnMain.Text = ENABLED and "● 開啟" or "● 關閉"
         btnMain.BackgroundColor3 = ENABLED and Color3.fromRGB(50, 220, 100) or Color3.fromRGB(220, 50, 80)
         
         if ENABLED then
-            -- 延遲掃描，避免開啟瞬間卡頓
             task.wait(0.1)
             scanUnanchoredParts()
         else
@@ -610,7 +593,6 @@ end)
         end
     end)
 
-    -- 模式切換按鈕
     btnMode.MouseButton1Click:Connect(function()
         disableTouchMode()
         
@@ -620,8 +602,8 @@ end)
         elseif MODE == "觸碰" then
             MODE = "範圍"
             btnMode.Text = "🎯 模式：範圍"
-            rangeModeTrigger = true  -- 立即允許觸發
-            lastExplosion = 0  -- 重置計時器
+            rangeModeTrigger = true
+            lastExplosion = 0
         else
             MODE = "點擊"
             btnMode.Text = "🎯 模式：點擊"
@@ -640,27 +622,22 @@ RunService.Heartbeat:Connect(function()
         return 
     end
     
-    -- 每5幀才檢查一次，降低負擔
     heartbeatCount = heartbeatCount + 1
     if heartbeatCount % 5 ~= 0 then return end
     
     local now = tick()
     
-    -- 高亮掃描（降低頻率到1秒）
     if now - lastScan >= SCAN_INTERVAL then
         updateHighlights()
-        -- 分批掃描，每次只處理部分
         task.spawn(scanUnanchoredParts)
         lastScan = now
     end
     
-    -- 範圍模式：每0.15秒自動爆炸
     if MODE == "範圍" and now - lastExplosion >= EXPLOSION_INTERVAL then
         explosionFlingAroundPlayer()
         lastExplosion = now
     end
     
-    -- 觸碰模式：啟用高質量
     if MODE == "觸碰" then
         enableTouchMode()
     else
@@ -687,7 +664,7 @@ end)
 
 -- ================== 載入提示 ==================
 game.StarterGui:SetCore("SendNotification", {
-    Title = "🚀 撞飛腳本 v5.8";
-    Text = "✅ 掃描範圍：100格\n💪 觸碰質量：50萬\n🌪️ 觸碰模式：高速旋轉！\n變成旋轉破壞球！";
+    Title = "🚀 撞飛腳本 v5.4";
+    Text = "✅ IY式旋轉模式\n💪 使用BodyAngularVelocity\n🌪️ 觸碰模式：極速旋轉！";
     Duration = 6;
 })
