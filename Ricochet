@@ -16,13 +16,16 @@ local TOUCH_MASS = 100000
 
 -- 高亮系統
 local highlights = {}
-local SCAN_INTERVAL = 0.3
+local SCAN_INTERVAL = 1.0
 local lastScan = 0
+local maxHighlights = 30
+local SCAN_RADIUS = 100  -- 擴大到100格
 
 -- 範圍模式計時器
 local lastExplosion = 0
-local EXPLOSION_INTERVAL = 0.15  -- 改成0.15秒，降低負擔
-local flingCooldowns = {}  -- 記錄每個物體的冷卻時間
+local EXPLOSION_INTERVAL = 0.15
+local flingCooldowns = {}
+local rangeModeTrigger = true  -- 用於確保範圍模式能立即觸發
 
 -- 觸碰模式用（修復版）
 local massConnection = nil
@@ -90,14 +93,50 @@ local function removeHighlight(part)
 end
 
 local function scanUnanchoredParts()
-    for _, obj in ipairs(Workspace:GetDescendants()) do
+    local char = player.Character
+    if not char then return end
+    
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    local playerPos = hrp.Position
+    
+    -- 使用 Region3 只掃描附近區域，不掃描全地圖
+    local region = Region3.new(
+        playerPos - Vector3.new(SCAN_RADIUS, SCAN_RADIUS, SCAN_RADIUS),
+        playerPos + Vector3.new(SCAN_RADIUS, SCAN_RADIUS, SCAN_RADIUS)
+    )
+    region = region:ExpandToGrid(4)
+    
+    local parts = Workspace:FindPartsInRegion3(region, char, 100)
+    local candidates = {}
+    
+    -- 只處理附近的物體
+    for _, obj in ipairs(parts) do
         if canBeFlung(obj) then
-            createHighlight(obj)
+            local distance = (obj.Position - playerPos).Magnitude
+            if distance <= SCAN_RADIUS then
+                table.insert(candidates, {part = obj, distance = distance})
+            end
         end
+    end
+    
+    -- 按距離排序
+    table.sort(candidates, function(a, b)
+        return a.distance < b.distance
+    end)
+    
+    -- 只標記最近的30個
+    local count = 0
+    for _, data in ipairs(candidates) do
+        if count >= maxHighlights then break end
+        createHighlight(data.part)
+        count = count + 1
     end
 end
 
 local function updateHighlights()
+    -- 快速清理：只檢查已標記的物體
     for part, hl in pairs(highlights) do
         if not canBeFlung(part) then
             removeHighlight(part)
@@ -209,6 +248,25 @@ end
 
 -- ================== 美化GUI介面 ==================
 local function createGUI()
+
+-- ================== 角色重生處理 ==================
+player.CharacterAdded:Connect(function(character)
+    -- 等待角色完全載入
+    character:WaitForChild("HumanoidRootPart")
+    task.wait(0.5)
+    
+    -- 保持原有狀態和模式，不重置
+    if ENABLED then
+        -- 重新掃描綠框
+        task.spawn(scanUnanchoredParts)
+    end
+    
+    -- 如果是觸碰模式，重新啟用
+    if MODE == "觸碰" then
+        task.wait(0.2)
+        enableTouchMode()
+    end
+end)
     local sg = Instance.new("ScreenGui")
     sg.Name = "FlingGUI"
     sg.ResetOnSpawn = false
@@ -504,6 +562,8 @@ local function createGUI()
         btnMain.BackgroundColor3 = ENABLED and Color3.fromRGB(50, 220, 100) or Color3.fromRGB(220, 50, 80)
         
         if ENABLED then
+            -- 延遲掃描，避免開啟瞬間卡頓
+            task.wait(0.1)
             scanUnanchoredParts()
         else
             for part, _ in pairs(highlights) do
@@ -523,6 +583,8 @@ local function createGUI()
         elseif MODE == "觸碰" then
             MODE = "範圍"
             btnMode.Text = "🎯 模式：範圍"
+            rangeModeTrigger = true  -- 立即允許觸發
+            lastExplosion = 0  -- 重置計時器
         else
             MODE = "點擊"
             btnMode.Text = "🎯 模式：點擊"
@@ -532,19 +594,30 @@ end
 createGUI()
 
 -- ================== 主循環 ==================
+local heartbeatCount = 0
 RunService.Heartbeat:Connect(function()
-    if not ENABLED then return end
+    if not ENABLED then 
+        if next(flingCooldowns) then
+            flingCooldowns = {}
+        end
+        return 
+    end
+    
+    -- 每5幀才檢查一次，降低負擔
+    heartbeatCount = heartbeatCount + 1
+    if heartbeatCount % 5 ~= 0 then return end
     
     local now = tick()
     
-    -- 高亮掃描
+    -- 高亮掃描（降低頻率到1秒）
     if now - lastScan >= SCAN_INTERVAL then
         updateHighlights()
-        scanUnanchoredParts()
+        -- 分批掃描，每次只處理部分
+        task.spawn(scanUnanchoredParts)
         lastScan = now
     end
     
-    -- 範圍模式：每0.1秒自動爆炸
+    -- 範圍模式：每0.15秒自動爆炸
     if MODE == "範圍" and now - lastExplosion >= EXPLOSION_INTERVAL then
         explosionFlingAroundPlayer()
         lastExplosion = now
@@ -577,7 +650,7 @@ end)
 
 -- ================== 載入提示 ==================
 game.StarterGui:SetCore("SendNotification", {
-    Title = "🚀 撞飛腳本 v5.4";
-    Text = "✨ 優化範圍模式效能\n✅ 修復卡頓問題\n✅ 按鈕文字改為 X 和 +\n拖動標題欄移動界面！";
-    Duration = 8;
+    Title = "🚀 撞飛腳本 v5.7";
+    Text = "✅ 掃描範圍：100格\n✅ 修復範圍模式Bug\n✅ 死亡保持模式\n開始使用！";
+    Duration = 6;
 })
