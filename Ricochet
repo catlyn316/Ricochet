@@ -12,7 +12,7 @@ local MODE = "點擊"
 local FLY_POWER = 16000
 local UP_POWER = 6000
 local EXPLOSION_RADIUS = 15
-local TOUCH_MASS = 100000
+local TOUCH_MASS = 500000  -- 大幅提升到50萬
 
 -- 高亮系統
 local highlights = {}
@@ -651,6 +651,6 @@ end)
 -- ================== 載入提示 ==================
 game.StarterGui:SetCore("SendNotification", {
     Title = "🚀 撞飛腳本 v5.7";
-    Text = "✅ 掃描範圍：100格\n✅ 修復範圍模式Bug\n✅ 死亡保持模式\n開始使用！";
+    Text = "✅ 掃描範圍：100格\n✅ 修復範圍模式Bug\n✅ 死亡保持模式\n💪 觸碰質量：50萬（超級坦克！）";
     Duration = 6;
 })
