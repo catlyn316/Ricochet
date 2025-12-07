@@ -216,11 +216,15 @@ local function enableTouchMode()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
-    -- 設置超高質量
-    hrp.CustomPhysicalProperties = PhysicalProperties.new(
-        TOUCH_MASS / hrp.Size.X / hrp.Size.Y / hrp.Size.Z,
-        0.3, 0, 1, 1
-    )
+    -- 讓角色所有部位都變成超高質量，防止被彈飛
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CustomPhysicalProperties = PhysicalProperties.new(
+                TOUCH_MASS / part.Size.X / part.Size.Y / part.Size.Z,
+                0.3, 0, 1, 1
+            )
+        end
+    end
     
     -- 創建 BodyAngularVelocity（IY式）
     if not bodyAngularVelocity then
@@ -266,13 +270,19 @@ local function disableTouchMode()
     
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp then
-        hrp.CustomPhysicalProperties = nil
         hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         
         -- 移除BAV
         local bav = hrp:FindFirstChild("FlingBAV")
         if bav then
             bav:Destroy()
+        end
+    end
+    
+    -- 恢復所有身體部位的物理屬性
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CustomPhysicalProperties = nil
         end
     end
     
