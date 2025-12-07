@@ -29,6 +29,7 @@ local rangeModeTrigger = true  -- 用於確保範圍模式能立即觸發
 
 -- 觸碰模式用（修復版）
 local massConnection = nil
+local spinConnection = nil  -- 旋轉連接
 
 -- ================== 判斷是否可彈飛 ==================
 local function canBeFlung(part)
@@ -234,6 +235,28 @@ local function enableTouchMode()
         TOUCH_MASS / hrp.Size.X / hrp.Size.Y / hrp.Size.Z,
         0.3, 0, 1, 1
     )
+    
+    -- 加入高速旋轉
+    if not spinConnection then
+        spinConnection = RunService.Heartbeat:Connect(function()
+            if MODE ~= "觸碰" or not ENABLED then 
+                if spinConnection then
+                    spinConnection:Disconnect()
+                    spinConnection = nil
+                end
+                return 
+            end
+            
+            local currentChar = player.Character
+            if not currentChar then return end
+            
+            local currentHrp = currentChar:FindFirstChild("HumanoidRootPart")
+            if currentHrp then
+                -- 施加持續的旋轉力矩
+                currentHrp:ApplyAngularImpulse(Vector3.new(0, 50000, 0))
+            end
+        end)
+    end
 end
 
 local function disableTouchMode()
@@ -243,6 +266,13 @@ local function disableTouchMode()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp then
         hrp.CustomPhysicalProperties = nil
+        hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)  -- 停止旋轉
+    end
+    
+    -- 停止旋轉連接
+    if spinConnection then
+        spinConnection:Disconnect()
+        spinConnection = nil
     end
 end
 
@@ -525,6 +555,13 @@ end)
             removeHighlight(part)
         end
         disableTouchMode()
+        
+        -- 確保停止旋轉
+        if spinConnection then
+            spinConnection:Disconnect()
+            spinConnection = nil
+        end
+        
         sg:Destroy()
     end)
 
@@ -650,7 +687,7 @@ end)
 
 -- ================== 載入提示 ==================
 game.StarterGui:SetCore("SendNotification", {
-    Title = "🚀 撞飛腳本 v5.7";
-    Text = "✅ 掃描範圍：100格\n✅ 修復範圍模式Bug\n✅ 死亡保持模式\n💪 觸碰質量：50萬（超級坦克！）";
+    Title = "🚀 撞飛腳本 v5.8";
+    Text = "✅ 掃描範圍：100格\n💪 觸碰質量：50萬\n🌪️ 觸碰模式：高速旋轉！\n變成旋轉破壞球！";
     Duration = 6;
 })
